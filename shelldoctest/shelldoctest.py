@@ -12,6 +12,7 @@ import inspect
 import re
 import subprocess
 import sys
+import os
 
 master = None
 _EXC_WRAPPER = 'system_command("%s")'
@@ -155,6 +156,64 @@ class ShellDocTestRunner(doctest.DocTestRunner):
         source = example.source[self._BEFORE:-(self._AFTER+1)] + "\n"
         out.append(doctest._indent(source))
         return '\n'.join(out)
+
+
+def testfile(filename, module_relative=True, name=None, package=None,
+             globs=None, verbose=None, report=True, optionflags=doctest.ELLIPSIS|doctest.NORMALIZE_WHITESPACE,
+             extraglobs=None, raise_on_error=False, exclude_empty=False,
+             verbose_level=None, filters=None, encoding=None):
+    # Assemble the globals.
+    if globs == None:
+        globs = dict()
+    else:
+        globs = globs.copy()
+    if extraglobs is not None:
+        globs.update(extraglobs)
+    if '__name__' not in globs:
+        globs['__name__'] = '__main__'
+    globs.update({"system_command": system_command})
+
+    global master
+
+    # Relativize the path
+    with open(filename, 'U') as fp:
+        text = fp.read()
+
+    # If no name was given, then use the file's name.
+    if name is None:
+        name = os.path.basename(filename)
+
+    finder = doctest.DocTestFinder(parser=ShellDocTestParser(), exclude_empty=exclude_empty)
+    if raise_on_error:
+        runner = doctest.DebugRunner(verbose=verbose, optionflags=optionflags)
+    else:
+        runner = ShellDocTestRunner(verbose=verbose, verbose_level=verbose_level, optionflags=optionflags)
+
+    if encoding is not None:
+        text = text.decode(encoding)
+
+    # quote escape
+    text = text.replace('\"', '\\"').replace("\'", "\\'")
+
+    # Read the file, convert it to a test, and run it.
+    parser = ShellDocTestParser()
+    test = parser.get_doctest(text, globs, name, filename, 0)
+
+    # run shell doctest
+    runner.run(test)
+
+    if report:
+        runner.summarize()
+
+    if master is None:
+        master = runner
+    else:
+        master.merge(runner)
+    if sys.version_info < (2, 6):
+        return runner.failures, runner.tries
+
+    return doctest.TestResults(runner.failures, runner.tries)
+
 
 def testmod(m=None, name=None, globs=None, verbose=None,
             report=True, optionflags=doctest.ELLIPSIS, extraglobs=None,
